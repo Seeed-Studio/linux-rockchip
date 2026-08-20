@@ -232,6 +232,15 @@ config MEDIATEK_GE_PHY
 	help
 	  Supports the MediaTek Gigabit Ethernet PHYs.
 
+config MAXIO_PHY
+	tristate "Maxio PHYs"
+	help
+	  Supports the Maxio MAE0621A Gigabit Ethernet PHY, an
+	  RTL8211F-compatible part. Basic C22 operation works with
+	  the generic driver; this driver adds configuration of the
+	  RJ45 LED mode, whose strap default is undesirable on some
+	  carrier boards.
+
 config MICREL_PHY
 	tristate "Micrel PHYs"
 	depends on PTP_1588_CLOCK_OPTIONAL
