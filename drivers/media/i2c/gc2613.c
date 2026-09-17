@@ -1183,14 +1183,12 @@ static long gc2613_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 				hdr_cfg->hdr_mode, w, h);
 			ret = -EINVAL;
 		} else {
-			w = gc2613->cur_mode->hts_def - gc2613->cur_mode->width;
-			h = gc2613->cur_mode->vts_def - gc2613->cur_mode->height;
-			__v4l2_ctrl_modify_range(gc2613->hblank, w, w, 1, w);
-			__v4l2_ctrl_modify_range(gc2613->vblank, h,
-						 GC2613_VTS_MAX - gc2613->cur_mode->height,
-						 1, h);
-			gc2613->cur_vts = gc2613->cur_mode->vts_def;
-			gc2613->cur_fps = gc2613->cur_mode->max_fps;
+			/* Modes may differ in MIPI link frequency; keep the
+			 * link_freq/pixel_rate controls in sync with the newly
+			 * selected mode or the dphy stays configured for the
+			 * old rate and the ISP reports CIF_ISP_PIC_SIZE_ERROR.
+			 */
+			gc2613_set_native_mode(gc2613, gc2613->cur_mode);
 			dev_info(gc2613->dev, "sensor mode: %d\n",
 				 gc2613->cur_mode->hdr_mode);
 		}
