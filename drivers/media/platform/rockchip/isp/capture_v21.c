@@ -1591,7 +1591,7 @@ static void rkisp_stop_streaming_tx(struct rkisp_stream *stream)
 
 	stream->stopping = true;
 	if (dev->isp_state & ISP_START &&
-	    !stream->ops->is_stream_stopped(dev->base_addr)) {
+	    !stream->ops->is_stream_stopped(stream)) {
 		stream->ops->stop_mi(stream);
 		wait_event_timeout(stream->done, !stream->streaming,
 				   msecs_to_jiffies(300));
