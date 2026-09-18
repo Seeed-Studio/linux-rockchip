@@ -123,9 +123,6 @@ static const char * const gc2613_supply_names[] = {
 };
 
 #define GC2613_NUM_SUPPLIES ARRAY_SIZE(gc2613_supply_names)
-/* Driver-private user-class control, valid with V4L2 extended controls. */
-#define V4L2_CID_GC2613_NATIVE_FPS (V4L2_CID_USER_BASE + 0x2613)
-
 #define to_gc2613(sd) container_of(sd, struct gc2613, subdev)
 
 enum {
@@ -175,7 +172,6 @@ struct gc2613 {
 	struct v4l2_ctrl    *v_flip;
 	struct v4l2_ctrl    *link_freq;
 	struct v4l2_ctrl    *pixel_rate;
-	struct v4l2_ctrl    *native_fps;
 
 	struct mutex        lock;
 	bool		    streaming;
@@ -208,13 +204,6 @@ static const s64 link_freq_menu_items[] = {
 	MIPI_FREQ_194M4,
 	MIPI_FREQ_441M6,
 	MIPI_FREQ_648M,
-};
-
-static const char * const gc2613_native_fps_menu[] = {
-	"30 fps",
-	"60 fps",
-	"90 fps",
-	NULL,
 };
 
 /* Supplier GC2613 1920x1080@30fps: 24MHz MCLK, 388.8Mbps/lane. */
@@ -792,11 +781,6 @@ static int gc2613_set_ctrl(struct v4l2_ctrl *ctrl)
 
 	/* Propagate change of current control to all related controls */
 	switch (ctrl->id) {
-	case V4L2_CID_GC2613_NATIVE_FPS:
-		if (gc2613->streaming)
-			return -EBUSY;
-		gc2613_set_native_mode(gc2613, &supported_modes[ctrl->val]);
-		return 0;
 	case V4L2_CID_VBLANK:
 		/* Native modes own their frame timing; do not VTS-downclock them. */
 		if (ctrl->val != gc2613->cur_mode->vts_def -
@@ -885,7 +869,7 @@ static int gc2613_initialize_controls(struct gc2613 *gc2613)
 
 	handler = &gc2613->ctrl_handler;
 	mode = gc2613->cur_mode;
-	ret = v4l2_ctrl_handler_init(handler, 9);
+	ret = v4l2_ctrl_handler_init(handler, 8);
 	if (ret)
 		return ret;
 	handler->lock = &gc2613->lock;
@@ -928,17 +912,6 @@ static int gc2613_initialize_controls(struct gc2613 *gc2613)
 
 	gc2613->v_flip = v4l2_ctrl_new_std(handler, &gc2613_ctrl_ops,
 					   V4L2_CID_VFLIP, 0, 1, 1, 0);
-
-	gc2613->native_fps = v4l2_ctrl_new_custom(handler,
-		&(struct v4l2_ctrl_config) {
-			.ops = &gc2613_ctrl_ops,
-			.id = V4L2_CID_GC2613_NATIVE_FPS,
-			.name = "Native FPS",
-			.type = V4L2_CTRL_TYPE_MENU,
-			.max = ARRAY_SIZE(gc2613_native_fps_menu) - 2,
-			.def = mode->link_freq_index,
-			.qmenu = gc2613_native_fps_menu,
-		}, NULL);
 
 	if (handler->error) {
 		ret = handler->error;
@@ -1478,7 +1451,7 @@ static int gc2613_s_stream(struct v4l2_subdev *sd, int on)
 		}
 
 		/* Mark streaming before the table write: mode switches
-		 * (s_frame_interval / native_fps) must be rejected for the
+		 * (s_frame_interval) must be rejected for the
 		 * whole start sequence. __gc2613_start_stream releases the
 		 * lock around v4l2_ctrl_handler_setup(); without this, a
 		 * concurrent rkaiq s_frame_interval could flip cur_mode and
