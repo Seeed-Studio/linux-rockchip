@@ -43,6 +43,7 @@
 #define MIPI_FREQ_396M		396000000
 
 #define GC2093_XVCLK_FREQ	27000000
+#define GC2093_XVCLK_FREQ_24M	24000000
 
 #define GC2093_REG_CHIP_ID_H	0x03F0
 #define GC2093_REG_CHIP_ID_L	0x03F1
@@ -115,6 +116,7 @@ struct gc2093_mode {
 	u32 hts_def;
 	u32 vts_def;
 	u32 exp_def;
+	u32 xvclk_freq;
 	u32 link_freq_index;
 	const struct reg_sequence *reg_list;
 	u32 reg_num;
@@ -555,6 +557,16 @@ static const struct reg_sequence gc2093_1080p_25fps_hdr_settings[] = {
 	{0x024d, 0x01},
 };
 
+/*
+ * window size=1920*1080 mipi@2lane
+ * mclk=24M
+ * pixel_line_total=2640 line_frame_total=1250
+ * frame_rate=60fps
+ */
+static const struct reg_sequence gc2093_1080p60_24m_settings[] = {
+#include "gc2093-1080p60-24m.inc"
+};
+
 static const struct gc2093_mode supported_modes[] = {
 	{
 		.width = 1920,
@@ -566,9 +578,27 @@ static const struct gc2093_mode supported_modes[] = {
 		.exp_def = 0x460,
 		.hts_def = 0x898,
 		.vts_def = 0x465,
+		.xvclk_freq = GC2093_XVCLK_FREQ,
 		.link_freq_index = LINK_FREQ_297M_INDEX,
 		.reg_list = gc2093_1080p_liner_settings,
 		.reg_num = ARRAY_SIZE(gc2093_1080p_liner_settings),
+		.hdr_mode = NO_HDR,
+		.vc[PAD0] = 0,
+	},
+	{
+		.width = 1920,
+		.height = 1080,
+		.max_fps = {
+			.numerator = 10000,
+			.denominator = 600000,
+		},
+		.exp_def = 0x460,
+		.hts_def = 0xa50,
+		.vts_def = 0x4e2,
+		.xvclk_freq = GC2093_XVCLK_FREQ_24M,
+		.link_freq_index = LINK_FREQ_396M_INDEX,
+		.reg_list = gc2093_1080p60_24m_settings,
+		.reg_num = ARRAY_SIZE(gc2093_1080p60_24m_settings),
 		.hdr_mode = NO_HDR,
 		.vc[PAD0] = 0,
 	},
@@ -582,6 +612,7 @@ static const struct gc2093_mode supported_modes[] = {
 		.exp_def = 0x460,
 		.hts_def = 0xa50,
 		.vts_def = 0x4e2,
+		.xvclk_freq = GC2093_XVCLK_FREQ,
 		.link_freq_index = LINK_FREQ_396M_INDEX,
 		.reg_list = gc2093_1080p_hdr_settings,
 		.reg_num = ARRAY_SIZE(gc2093_1080p_hdr_settings),
@@ -601,6 +632,7 @@ static const struct gc2093_mode supported_modes[] = {
 		.exp_def = 0x460,
 		.hts_def = 0xa50,
 		.vts_def = 0x5dc,
+		.xvclk_freq = GC2093_XVCLK_FREQ,
 		.link_freq_index = LINK_FREQ_396M_INDEX,
 		.reg_list = gc2093_1080p_25fps_hdr_settings,
 		.reg_num = ARRAY_SIZE(gc2093_1080p_25fps_hdr_settings),
@@ -882,12 +914,13 @@ static int __gc2093_power_on(struct gc2093 *gc2093)
 	int ret;
 	struct device *dev = gc2093->dev;
 
-	ret = clk_set_rate(gc2093->xvclk, GC2093_XVCLK_FREQ);
+	ret = clk_set_rate(gc2093->xvclk, gc2093->cur_mode->xvclk_freq);
 	if (ret < 0)
 		dev_warn(dev, "Failed to set xvclk rate\n");
 
-	if (clk_get_rate(gc2093->xvclk) != GC2093_XVCLK_FREQ)
-		dev_warn(dev, "xvclk mismatched, modes are based on 27MHz\n");
+	if (clk_get_rate(gc2093->xvclk) != gc2093->cur_mode->xvclk_freq)
+		dev_warn(dev, "xvclk mismatched, current mode is based on %uHz\n",
+			 gc2093->cur_mode->xvclk_freq);
 
 	ret = clk_prepare_enable(gc2093->xvclk);
 	if (ret < 0) {
@@ -1421,13 +1454,40 @@ static int gc2093_enum_frame_interval(struct v4l2_subdev *sd,
 	return 0;
 }
 
+/* Caller holds gc2093->lock. The register table is applied on next stream. */
+static void gc2093_set_native_mode(struct gc2093 *gc2093,
+				   const struct gc2093_mode *mode)
+{
+	s64 exposure_max;
+	s64 vblank_def;
+	u32 h_blank;
+
+	gc2093->cur_mode = mode;
+	__v4l2_ctrl_s_ctrl(gc2093->link_freq, mode->link_freq_index);
+	__v4l2_ctrl_s_ctrl_int64(gc2093->pixel_rate,
+				 to_pixel_rate(mode->link_freq_index));
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(gc2093->hblank, h_blank, h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(gc2093->vblank, vblank_def,
+				 GC2093_VTS_MAX - mode->height, 1, vblank_def);
+	__v4l2_ctrl_s_ctrl(gc2093->vblank, vblank_def);
+
+	exposure_max = mode->vts_def - 4;
+	__v4l2_ctrl_modify_range(gc2093->exposure, GC2093_EXPOSURE_MIN,
+				 exposure_max, GC2093_EXPOSURE_STEP, mode->exp_def);
+	__v4l2_ctrl_s_ctrl(gc2093->exposure, mode->exp_def);
+	gc2093->cur_vts = mode->vts_def;
+	gc2093->cur_fps = mode->max_fps;
+}
+
 static int gc2093_set_fmt(struct v4l2_subdev *sd,
 			  struct v4l2_subdev_state *sd_state,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct gc2093 *gc2093 = to_gc2093(sd);
 	const struct gc2093_mode *mode;
-	s64 h_blank, vblank_def;
 
 	mutex_lock(&gc2093->lock);
 
@@ -1448,24 +1508,78 @@ static int gc2093_set_fmt(struct v4l2_subdev *sd,
 		return -ENOTTY;
 #endif
 	} else {
-		gc2093->cur_mode = mode;
-		__v4l2_ctrl_s_ctrl(gc2093->link_freq, mode->link_freq_index);
-		__v4l2_ctrl_s_ctrl_int64(gc2093->pixel_rate,
-					 to_pixel_rate(mode->link_freq_index));
-		h_blank = mode->hts_def - mode->width;
-		__v4l2_ctrl_modify_range(gc2093->hblank, h_blank,
-					 h_blank, 1, h_blank);
-		vblank_def = mode->vts_def - mode->height;
-		__v4l2_ctrl_modify_range(gc2093->vblank, vblank_def,
-					 GC2093_VTS_MAX - mode->height,
-					 1, vblank_def);
-		gc2093->cur_vts = mode->vts_def;
-		gc2093->cur_fps = mode->max_fps;
+		gc2093_set_native_mode(gc2093, mode);
 	}
 
 	mutex_unlock(&gc2093->lock);
 	return 0;
 }
+
+static int gc2093_s_frame_interval_impl(struct gc2093 *gc2093,
+					struct v4l2_subdev_frame_interval *fi,
+					bool try_fmt)
+{
+	const struct gc2093_mode *mode = NULL;
+	u32 fps, mode_fps;
+	int ret = 0;
+	u32 i;
+
+	if (!fi->interval.numerator || !fi->interval.denominator)
+		return -EINVAL;
+
+	mutex_lock(&gc2093->lock);
+
+	fps = fi->interval.denominator / fi->interval.numerator;
+
+	if (gc2093->cur_mode->max_fps.denominator /
+	    gc2093->cur_mode->max_fps.numerator == fps) {
+		fi->interval = gc2093->cur_mode->max_fps;
+		goto unlock;
+	}
+
+	if (!try_fmt && gc2093->streaming) {
+		ret = -EBUSY;
+		goto unlock;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
+		mode_fps = supported_modes[i].max_fps.denominator /
+			   supported_modes[i].max_fps.numerator;
+		if (supported_modes[i].hdr_mode == NO_HDR && mode_fps == fps) {
+			mode = &supported_modes[i];
+			break;
+		}
+	}
+
+	if (!mode) {
+		ret = -EINVAL;
+		goto unlock;
+	}
+
+	fi->interval = mode->max_fps;
+	if (!try_fmt)
+		gc2093_set_native_mode(gc2093, mode);
+
+unlock:
+	mutex_unlock(&gc2093->lock);
+	return ret;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+static int gc2093_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	return gc2093_s_frame_interval_impl(to_gc2093(sd), fi,
+					    fi->which == V4L2_SUBDEV_FORMAT_TRY);
+}
+#else
+static int gc2093_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	return gc2093_s_frame_interval_impl(to_gc2093(sd), fi, false);
+}
+#endif
 
 static int gc2093_get_fmt(struct v4l2_subdev *sd,
 			  struct v4l2_subdev_state *sd_state,
@@ -1564,6 +1678,7 @@ static const struct v4l2_subdev_core_ops gc2093_core_ops = {
 static const struct v4l2_subdev_video_ops gc2093_video_ops = {
 	.s_stream = gc2093_s_stream,
 	.g_frame_interval = gc2093_g_frame_interval,
+	.s_frame_interval = gc2093_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops gc2093_pad_ops = {
