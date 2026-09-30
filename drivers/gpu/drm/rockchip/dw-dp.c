@@ -453,6 +453,7 @@ struct dw_dp {
 	int hpd_irq;
 	int id;
 	struct work_struct hpd_work;
+	struct delayed_work hpd_retrigger_work;
 	struct gpio_desc *hpd_gpio;
 	bool force_hpd;
 	bool usbdp_hpd;
@@ -4461,6 +4462,21 @@ static int dw_dp_link_enable(struct dw_dp *dp)
 	return 0;
 }
 
+static void dw_dp_hpd_retrigger_work(struct work_struct *work)
+{
+	struct dw_dp *dp = container_of(to_delayed_work(work), struct dw_dp,
+				       hpd_retrigger_work);
+
+	if (dp->chip_data[dp->id].chip_type != RK3588_DP)
+		return;
+
+	if (!dw_dp_detect(dp))
+		return;
+
+	dev_info(dp->dev, "forcing DP connector hotplug after settle\n");
+	drm_kms_helper_connector_hotplug_event(&dp->connector);
+}
+
 static void dw_dp_bridge_atomic_enable(struct drm_bridge *bridge,
 				       struct drm_bridge_state *old_state)
 {
@@ -5061,11 +5077,23 @@ static void dw_dp_hpd_work(struct work_struct *work)
 {
 	struct dw_dp *dp = container_of(work, struct dw_dp, hpd_work);
 	bool long_hpd;
+	bool status;
+	bool cancel_retrigger = false;
+	bool retrigger_hpd = false;
 	int ret;
 
 	mutex_lock(&dp->irq_lock);
 	long_hpd = dp->hotplug.long_hpd;
+	status = dp->hotplug.status;
+	if (long_hpd && dp->chip_data[dp->id].chip_type == RK3588_DP) {
+		if (status)
+			retrigger_hpd = true;
+		else
+			cancel_retrigger = true;
+	}
 	mutex_unlock(&dp->irq_lock);
+	if (cancel_retrigger)
+		cancel_delayed_work(&dp->hpd_retrigger_work);
 
 	dev_dbg(dp->dev, "got hpd irq - %s\n", long_hpd ? "long" : "short");
 
@@ -5096,6 +5124,9 @@ static void dw_dp_hpd_work(struct work_struct *work)
 		phy_power_off(dp->phy);
 	} else {
 		drm_helper_hpd_irq_event(dp->bridge.dev);
+		if (retrigger_hpd)
+			mod_delayed_work(system_wq, &dp->hpd_retrigger_work,
+					 msecs_to_jiffies(1500));
 	}
 }
 
@@ -5116,12 +5147,14 @@ static void dw_dp_handle_hpd_event(struct dw_dp *dp)
 	if (value & HPD_HOT_PLUG) {
 		dev_dbg(dp->dev, "Hot plug detected\n");
 		dp->hotplug.long_hpd = true;
+		dp->hotplug.status = true;
 		regmap_write(dp->regmap, DPTX_HPD_STATUS, HPD_HOT_PLUG);
 	}
 
 	if (value & HPD_HOT_UNPLUG) {
 		dev_dbg(dp->dev, "Unplug detected\n");
 		dp->hotplug.long_hpd = true;
+		dp->hotplug.status = false;
 		regmap_write(dp->regmap, DPTX_HPD_STATUS, HPD_HOT_UNPLUG);
 	}
 
@@ -5859,6 +5892,7 @@ static int dw_dp_probe(struct platform_device *pdev)
 
 	mutex_init(&dp->irq_lock);
 	INIT_WORK(&dp->hpd_work, dw_dp_hpd_work);
+	INIT_DELAYED_WORK(&dp->hpd_retrigger_work, dw_dp_hpd_retrigger_work);
 	INIT_DELAYED_WORK(&dp->hotplug.state_work, dw_dp_gpio_hpd_state_work);
 	init_completion(&dp->complete);
 	init_completion(&dp->hdcp_complete);
@@ -6009,6 +6043,7 @@ static int dw_dp_remove(struct platform_device *pdev)
 	component_del(dp->dev, &dw_dp_component_ops);
 	cancel_work_sync(&dp->hpd_work);
 	cancel_delayed_work_sync(&dp->hotplug.state_work);
+	cancel_delayed_work_sync(&dp->hpd_retrigger_work);
 
 	return 0;
 }
