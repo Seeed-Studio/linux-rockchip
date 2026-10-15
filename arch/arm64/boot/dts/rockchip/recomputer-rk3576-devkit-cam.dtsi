@@ -104,8 +104,9 @@
 		VDD-supply = <&cam0_rst>;
 		power-supply = <&cam0_pwr>;
 		rockchip,camera-module-index = <0>;
-		rockchip,vcm-start-current = <10>;
+		rockchip,vcm-start-current = <37>;
 		rockchip,vcm-rated-current = <85>;
+		rockchip,vcm-max-current = <85>;
 		rockchip,vcm-step-mode = <5>;
 		rockchip,camera-module-facing = "back";
 
@@ -169,8 +170,9 @@
 		VDD-supply = <&cam1_rst>;
 		power-supply = <&cam1_pwr>;
 		rockchip,camera-module-index = <1>;
-		rockchip,vcm-start-current = <10>;
+		rockchip,vcm-start-current = <37>;
 		rockchip,vcm-rated-current = <85>;
+		rockchip,vcm-max-current = <85>;
 		rockchip,vcm-step-mode = <5>;
 		rockchip,camera-module-facing = "back";
 

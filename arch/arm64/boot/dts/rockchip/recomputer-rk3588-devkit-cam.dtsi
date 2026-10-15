@@ -94,13 +94,14 @@
 
 	/* Raspberry Pi Camera v3 (IMX708 + VCM) */
 	dw9817_0: dw9817@c {
-		compatible = "dongwoon,dw9817-vcm";
+		compatible = "dongwoon,dw9800w";
 		status = "disabled";
 		reg = <0x0c>;
 		VDD-supply = <&cam0_rst>;
 		rockchip,camera-module-index = <0>;
-		rockchip,vcm-start-current = <10>;
+		rockchip,vcm-start-current = <37>;
 		rockchip,vcm-rated-current = <85>;
+		rockchip,vcm-max-current = <85>;
 		rockchip,vcm-step-mode = <5>;
 		rockchip,camera-module-facing = "front";
 	};
@@ -155,13 +156,14 @@
 
 	/* Raspberry Pi Camera v3 (IMX708 + VCM) */
 	dw9817_1: dw9817@c {
-		compatible = "dongwoon,dw9817-vcm";
+		compatible = "dongwoon,dw9800w";
 		status = "disabled";
 		reg = <0x0c>;
 		VDD-supply = <&cam1_rst>;
 		rockchip,camera-module-index = <1>;
-		rockchip,vcm-start-current = <10>;
+		rockchip,vcm-start-current = <37>;
 		rockchip,vcm-rated-current = <85>;
+		rockchip,vcm-max-current = <85>;
 		rockchip,vcm-step-mode = <5>;
 		rockchip,camera-module-facing = "back";
 	};
