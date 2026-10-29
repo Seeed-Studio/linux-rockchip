@@ -372,8 +372,14 @@
 	};
 };
 
-/* CAN1: TPT71044 isolated transceiver, GPIO4_B4/B5 (M2) */
+/*
+ * CAN1: TPT71044 isolated transceiver, GPIO4_B4/B5 (M2).
+ * Bind the restored CAN-FD driver (rk3576_canfd) instead of the
+ * classic-only rk3576_can that the rkr7.2 base binds for
+ * "rockchip,rk3576-can".
+ */
 &can1 {
+	compatible = "rockchip,rk3576-canfd";
 	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&can1m2_pins>;
